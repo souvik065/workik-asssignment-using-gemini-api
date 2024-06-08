@@ -1,11 +1,13 @@
 import asyncio
-import pathlib
-import textwrap
 import google.generativeai as genai
 import os
 from dotenv import find_dotenv, load_dotenv
 import json
-from util import  fileoperations as fl
+from util import  fileoperations as fl, content_generator as cn
+import sys
+import shutil
+
+from util.handler import FileLimitExceededError
 
 load_dotenv()
 gemini_api_key = os.environ.get("GEMINI_API_KEY")
@@ -15,15 +17,13 @@ gemini_api_key = os.environ.get("GEMINI_API_KEY")
 #   api_key=os.environ.get("CUSTOM_ENV_NAME"),
 # )
 
-def to_markdown(text):
-    text = text.replace('•', ' *')
-    return textwrap.indent(text, '> ', predicate=lambda _: True)
 
 genai.configure(api_key=gemini_api_key)
-
+"""
 for m in genai.list_models():
     if 'generateContent' in m.supported_generation_methods:
-        print(m.name)
+        print(m.name)        
+"""
 
 generation_config = {
     "temperature": 1,
@@ -34,50 +34,67 @@ generation_config = {
 }
 
 model = genai.GenerativeModel(model_name="gemini-1.5-flash", generation_config=generation_config,)
-print(model)
+
+def parse_multiple_json(response):
+    """Parse multiple JSON objects from a string."""
+    decoder = json.JSONDecoder()
+    pos = 0
+    while pos < len(response):
+        response = response.lstrip()
+        try:
+            obj, pos = decoder.raw_decode(response)
+            yield obj
+            response = response[pos:]
+        except json.JSONDecodeError:
+            break
+
+def menu():
+    print("Welcome to Gemini AI Assistant :")
+    print("1. Create a Project with using Gemini")
+    print("3. Exit")
 
 
 
+def option1():
+    prompt = input("Enter what you want to create : ")
+    response = asyncio.run(cn.generate_content_async(model=model,prompt=prompt))
+    print("\n Response : ", response)
+    project_name = input("Enter Project Name : ")
 
-async def generate_content_async():
-    # Your asynchronous content generation logic
-    response = await model.generate_content_async("Make an nodejs application to peforme CURD operation with the project structure")
-    return response.text
+    # Parse the JSON data
+    try:
+        all_data = parse_multiple_json(response)
+        for data in all_data:
+            base_directory = f"projects/{project_name or 'default_project'}"
+            os.makedirs(base_directory, exist_ok=True)
+            fl.create_structure(base_directory, data, file_limit=20)
 
-
-response = asyncio.run(generate_content_async())
-print("\n Response : ", response)
-
-
-
-# Parse the JSON data
-try:
-    data = json.loads(response)
-    # Base directory for the project
-    base_directory = 'projects/project-2'
-
-    # Create the base directory if it doesn't exist
-    os.makedirs(base_directory, exist_ok=True)
-
-    # Create the project structure
-    fl.create_structure(base_directory, data)
-except json.JSONDecodeError as e:
-    print(f"JSONDecodeError: {e.msg} at line {e.lineno} column {e.colno} (char {e.pos})")
+            # Zip the project directory
+            zip_file = f"{base_directory}.zip"
+            shutil.make_archive(base_directory, 'zip', base_directory)
+            print(f"Project zipped successfully at {zip_file}")
+    except json.JSONDecodeError as e:
+        print(f"JSONDecodeError: {e.msg} at line {e.lineno} column {e.colno} (char {e.pos})")
+    except FileLimitExceededError as e:
+        print(f"Error: {e}")
 
 
+def exit_program():
+    print("Exiting program...")
+    sys.exit()
 
-"""
-# Clean the response if necessary
-#cleaned_response = response.strip()
+def main():
+    menu()
+    choice = input("Enter your choice : ")
+    match choice:
+        case '1':
+            option1()
+        case '2':
+            exit_program()
+        case _:
+            print("Invalid choice. Please choose a valid option.")
 
-# Load the cleaned response as a JSON object
 
-try:
-    data = json.loads(cleaned_response)
-    # Pretty print the JSON object
-    print(type(data))
-    print(json.dumps(data, indent=4))
-except json.JSONDecodeError as e:
-    print(f"Error decoding JSON: {e}")
-"""
 
+if __name__ == "__main__":
+    main()
